@@ -1,0 +1,1 @@
+gaucho_synth_data=read.table("gaucho_synth_data.txt",header=TRUE,row.names=1)

@@ -1,0 +1,1 @@
+gaucho_simple_data=read.table("gaucho_simple_data.txt",header=TRUE,row.names=1)

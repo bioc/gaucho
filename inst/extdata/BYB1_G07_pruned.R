@@ -1,0 +1,1 @@
+BYB1_G07_pruned=read.table("BYB1_G07_pruned.txt",header=TRUE,row.names=1)

@@ -1,0 +1,8 @@
+export(gaucho)
+export(gauchoReport)
+import(GA)
+import(Rgraphviz)
+import(compiler)
+import(graph)
+import(heatmap.plus)
+import(png)

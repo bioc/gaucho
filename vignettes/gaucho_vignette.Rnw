@@ -1,0 +1,568 @@
+%\VignetteDepends{knitr}
+%\VignetteIndexEntry{An introduction to gaucho}
+%\VignetteCompiler{knitr}
+%\VignetteEngine{knitr::knitr}
+
+\documentclass[a4paper]{article}
+
+% LaTeX packages 
+\usepackage{hyperref} % For hyperlinks\
+\usepackage{float} % for floating images
+\usepackage{alltt} % for verbatim blocks of text
+\usepackage{verbatim} % to allow multi-line block comments
+\usepackage{color} % to define custom colours
+\usepackage{a4wide} % gives us wider pages
+\usepackage[backend=bibtex,sorting=none]{biblatex} % bibliography package
+
+% Setting up bibliography
+\bibliography{gaucho_bib}
+
+% Define a few custom colours
+\definecolor{icrgreen}{RGB}{201,221,003}
+\definecolor{icryellow}{RGB}{255,214,002}
+\definecolor{icrorange}{RGB}{249,161,000}
+\definecolor{icrpink}{RGB}{238,126,166}
+\definecolor{icrred}{RGB}{167,025,048}
+
+
+% This block sets all links to be black and removes the hideous coloured boxes around them
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    filecolor=black,
+    urlcolor=black,
+}
+
+\begin{document}
+
+\title{An introduction to gaucho}
+%\author{Alex Murison and Christopher P Wardell \\ Alexander.Murison@icr.ac.uk, Christopher.Wardell@icr.ac.uk} % as single line
+\author{
+  Alex Murison\\
+  Alexander.Murison@icr.ac.uk
+  \and
+  Christopher P Wardell\\
+  Christopher.Wardell@icr.ac.uk
+}
+\maketitle
+
+This vignette serves as an introduction to the R package gaucho.  It covers the basic use cases and usage of the package, explaining the input and output and contains several worked examples.  If you use this package, please cite it\cite{gauchoR} and/or a recent paper where it was used\cite{melchor}.  A BibTeX entry for LaTeX users is:
+
+\begin{verbatim}
+@Manual{gauchoR,
+    title = {GAUCHO: Genetic Algorithms for Understanding Clonal Heterogeneity and Ordering},
+    author = {A. Murison and C. P. Wardell},
+    note = {R package},
+}
+\end{verbatim}
+
+\paragraph{Installation:} The latest stable version can be installed from Bioconductor like so:
+ 
+<<load_library_fake, eval=FALSE>>=
+## Install
+source("http://bioconductor.org/biocLite.R")
+biocLite("gaucho")
+## Load
+library(gaucho)
+@
+
+\noindent The latest development version can be cloned from GitHub but must be built from source:\\
+
+\noindent https://github.com/MurisonWardell/gaucho
+
+\paragraph{Dependencies:} Please note that gaucho depends on the following packages which are either available from CRAN or part of base R, but these should be automatically downloaded when Gaucho is installed using biocLite():
+GA\cite{scrucca}, compiler\cite{baseR}, heatmap.plus\cite{heatmapplusR}, png\cite{pngR}, as well as graph\cite{graphR}.
+
+
+\pagebreak
+\tableofcontents
+\pagebreak
+
+\section{Overview}
+\subsection{Introduction}
+We work extensively with sequencing data, particularly next-generation sequencing data from tumour-normal pairs.  The tumour genome contains many single nucleotide variants (SNVs) which are single-base differences between the tumour sample and the reference genome.  These can be separated into two groups:
+
+\begin{enumerate}
+   \item SNVs shared between tumour and normal samples.  These are germline variants and were present before the tumour
+   \item SNVs only present in the tumour sample.  These are somatic mutations
+\end{enumerate}
+
+Tumours are known to be heterogeneous populations of related cells and in any given tumour sample there may be differing proportions of cells that contain certain SNVs.  These proportions can be calculated for each SNV in turn using the number of supporting reads, the read depth and the copy number of that region.  These proportions are termed the cancer cell fraction (CCF) and range between 0 (no cells contain the SNV in that sample) to 1 (all cells contain the SNV in that sample).
+
+The SNV CCF values can be explained as a mixture of a number of related clones.  We know that SNVs are heritable characteristics between clones and that new clones arise and go extinct over time.
+
+As these mixtures are the product of evolutionary processes it seemed appropriate to use genetic algorithms to infer their ancestry and composition.
+
+\subsection{Genetic algorithms}
+Genetic algorithms (GAs) are stochastic heuristic optimisation algorithms.  A population of potential solutions is generated and using a scoring function is compared to the observed data.  Solutions that best explain the observed data are allowed to reproduce with one another.  Reproduction allows both the recombination of solutions from different individuals and also the possibility of mutations.
+
+GAs are particularly useful when a brute-force approach is undesirable or impractical, for example when the search space is very large.  An important consideration is that the search space may contain multiple solutions that exist as local minima and these may be difficult to escape, even with a high mutation rate.  \textbf{It is therefore imperative to run gaucho multiple times and select the best-scoring solution}.  Further details are discussed in the Advanced gaucho usage and best practices section of the worked examples.
+
+\subsection{gaucho input}
+The main gaucho function (\emph{gaucho()}) requires a data frame of observations as input.  Each row represents a feature and each column represents a discrete sample separated by time or space. Every value must be a value between 0 and 1 and represents the proportion of individuals that contain that feature.  
+
+An example of such data would be single nucleotide variants (SNVs) detected using DNA sequencing in multiple tumour samples.  Given the number of reference and non-reference reads as well as the copy number at the site, it is possible to infer the proportion of cells containing the SNV using the following equation:
+\begin{equation}
+p = min\left(\frac{r.CN}{(r+R)}\right)
+\end{equation}
+
+\noindent Where:\\*
+\noindent\emph{p} = proportion of cells containing the SNV\\*
+\noindent\emph{CN} = copy number at the site\\*
+\noindent\emph{r} = number of non-reference reads\\*
+\noindent\emph{R} = number of reference reads\\*
+
+If a site were sequenced to 100x depth, with 25 non-reference reads, 75 reference reads and diploid copy number, the result would be min(1,25*2/(25+75)) = 0.5. Therefore, 50\% of the cells in the sample contain the SNV.
+
+\subsection{How gaucho encodes individuals and solutions}
+Every individual in the population is encoded as a character string.  Consider the following solution to an included data set.  It contains three clones and three SNVs.  The solution encodes a phylogeny, the proportion of each clone in each sample and the clone in which each SNV first occurred.  Let there be {\color{icrpink}s} samples and {\color{icrred}k} clones.\\
+{\raggedright{}\texttt{{\color{icrgreen}0  1  2 }{\color{icryellow} 5  0  0  3  7  0   0   1   4 }{\color{icrorange} 1   2   3 }}}\\
+\texttt{{\color{icrgreen}0  1  2 }}: The first {\color{icrred}k} characters encode the position in the phylogeny of each clone.  In this example, the first element is the root (hence 0), the second is descended from the first and third is descended from the second.  If the second and third clones were both descended from the first clone, the phylogeny would be \texttt{0 1 1}.\\
+\texttt{{\color{icryellow}5  0  0  3  7  0   0   1   4 }}: The next {\color{icrred}k}*{\color{icrpink}s} characters encode the proportions.  Each block of {\color{icrred}k} characters encodes the proportions of each clone for the {\color{icrpink}s}th sample.  Proportions are generated by dividing the numbers in the block by their sum.  This example is explained below:
+
+<<demontrate_proportions, eval=TRUE>>=
+## First sample is reprented by first block of three digits
+## First sample is 100% clone 1, 0% clone 2, 0% clone 3
+c(5,0,0)/sum(c(5,0,0))
+## Second sample is reprented by second block of three digits
+## Second sample is 30% clone 1, 70% clone 2, 0% clone 3
+c(3,7,0)/sum(c(3,7,0))
+## Third sample is reprented by third block of three digits
+## Third sample is 0% clone 1, 20% clone 2, 80% clone 3
+c(0,1,4)/sum(c(0,1,4))
+@
+
+{\raggedright{}\texttt{{\color{icrorange}1   2   3 }}: The final {\color{icrred}k} characters encodes the mutation matrix and the order of SNVs. In this example the first SNV occurred in clone 1 (and is inherited by its descendants), the second SNV occurred in clone 2 (and is inherited by its descendent) and SNV 3 occurred in clone 3.  If all SNVs occurred in clone 1, this string would be \texttt{1 1 1}.}
+
+\subsection{gaucho mutation function}
+The mutation function has been heavily modified in \texttt{gaucho} relative to the original in \texttt{GA}.  If an individual in the
+population undergoes mutation there is an equal chance of it occurring in the phylogeny, proportion of clones or mutation matrix 
+sections of the solution.
+
+A mutation in the phylogeny section results in a new phylogeny being randomly assigned to the individual. A mutation in the proportion
+section results in between 1 to {\color{icrred}k} increments or decrements to the assigned values.  This enhanced level of mutation
+is required to help individuals escape from local minima.  A mutation in the mutation matrix section results in a single value being randomly assigned to a new clone.
+
+Also, note that crosses between parents are not permitted in the phylogeny section of the solution.
+
+\subsection{gaucho output}
+The \texttt{gaucho()} function returns an object of class \texttt{ga}.  Although this object can be interrogated manually, the easiest way to look at the results is to use the gauchoReport() function.  The default output will produce the following files in the current working directory (where {\color{icrred}k}=number of clones, {\color{icrred}i}=number of solution and {\color{icrred}n}=total number of top-scoring solutions):
+
+\begin{enumerate}
+   \item png image: {\color{icrred}k}clones.solution{\color{icrred}i}of{\color{icrred}n}.phylogeny.png: the inferred phylogeny of the solution 
+   \item png image: {\color{icrred}k}clones.solution{\color{icrred}i}of{\color{icrred}n}.heatmap.png: a heatmap of the solution
+   \item png image: {\color{icrred}k}clones.solution{\color{icrred}i}of{\color{icrred}n}.proportions.png: a stacked barplot of the proportion of each clone that composes each sample
+   \item png image: {\color{icrred}k}clones.fitnessconvergence.png: the fitness convergence plot.  This can be used to ensure that gaucho is reaching convergence and being run for an appropriate number of generations
+   \item text file: {\color{icrred}k}clones.complete.solution{\color{icrred}i}of{\color{icrred}n}.txt: the solution encoded as a string
+   \item text file: {\color{icrred}k}clones.phylogeny.solution.{\color{icrred}i}of{\color{icrred}n}.txt: the phylogeny of the solution
+   encoded as a matrix.  Note that these matrices are not directly compatible with the \emph{graph} R package
+   \item text file: {\color{icrred}k}clones.mutation.matrix.{\color{icrred}i}of{\color{icrred}n}.txt: a binary matrix showing the
+   presence or absence of each SNV in each clone
+   \item text file: {\color{icrred}k}clones.proportions.solution.{\color{icrred}i}of{\color{icrred}n}.txt: the proportion of each 
+   clone that composes each sample
+\end{enumerate}
+
+Note that in the event of multiple solutions scoring equally well, files for up to the top five solutions will be produced.
+
+<<emit_results, eval=FALSE>>=
+## Write results to files
+gauchoReport(gaucho_input_dataframe,gaucho_output_object)
+@
+
+
+\section{Worked examples}
+A number of sample data sets are distributed with the gaucho package and are discussed in order of increasing complexity.
+\subsection{Example 1 - simple synthetic data}
+A very small and simple synthetic data set is included.  To demonstrate that your gaucho installation is working, you can execute the following commands.  
+<<gaucho_simple_data_show, eval=TRUE>>=
+## Load library
+library(gaucho)
+
+## Load simple data set
+gaucho_simple_data = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_simple_data.txt"),header=TRUE,row.names=1)
+
+## There  are three columns (time points T0, T1 and T2)
+## and three rows (mutations M1, M2, M3)
+gaucho_simple_data
+@
+
+As we know the true number and relationship between the clones, we specify these and run the algorithm.  It should converge at the minimum score of zero quite quickly and exit after 200 generations of coverging at the highest fitness value.
+
+<<gaucho_simple_data_execute, eval=FALSE>>=
+## Execute gaucho() function on the simple data set
+simpleDataSolution=gaucho(gaucho_simple_data, number_of_clones=3, nroot=1,iterations=1000)
+@
+
+We can view the highest scoring solution(s) by accessing the appropriate slot in the returned object.  For example:
+
+% This is the proper knitr version, but it sadly won't compile on Linux
+% Therefore below is a raw Latex solution
+%<<gaucho_simple_data_solution, eval=FALSE>>=
+%## Access solution slot in returned object to show highest scoring solution(s)
+%simpleDataSolution@solution
+%
+%     x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15
+%[1,]  0  1  2  5  0  0  3  7  0   0   1   4   1   2   3
+%[2,]  0  1  2  7  0  0  3  7  0   0   1   4   1   2   3
+%[3,]  0  1  2  1  0  0  3  7  0   0   1   4   1   2   3
+%[4,]  0  1  2  6  0  0  3  7  0   0   1   4   1   2   3
+%[5,]  0  1  2  3  0  0  3  7  0   0   1   4   1   2   3
+%[6,]  0  1  2 11  0  0  3  7  0   0   1   4   1   2   3
+%[7,]  0  1  2 12  0  0  3  7  0   0   1   4   1   2   3
+%
+%@
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlcom{## Access solution slot in returned object to show highest scoring solution(s)}
+simpleDataSolution@solution
+
+     x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15
+[1,]  0  1  2  5  0  0  3  7  0   0   1   4   1   2   3
+[2,]  0  1  2  7  0  0  3  7  0   0   1   4   1   2   3
+[3,]  0  1  2  1  0  0  3  7  0   0   1   4   1   2   3
+[4,]  0  1  2  6  0  0  3  7  0   0   1   4   1   2   3
+[5,]  0  1  2  3  0  0  3  7  0   0   1   4   1   2   3
+[6,]  0  1  2 11  0  0  3  7  0   0   1   4   1   2   3
+[7,]  0  1  2 12  0  0  3  7  0   0   1   4   1   2   3
+
+\end{alltt}
+\end{kframe}
+\end{knitrout}
+
+Note that it's possible for multiple solutions to have equally good fitness scores which may encode different phylogenies, mutation distributions or proportions.  However, in this case all of the solutions are numerically identical and exist because of the degeneracy in the way that the clonal proportions are encoded.
+
+We can now examine the best solution(s) using the gauchoReport() function.  
+
+<<gaucho_simple_data_report, eval=FALSE>>=
+## Produce plots for the phylogeny, heatmap and proportions in turn
+gauchoReport(gaucho_simple_data,simpleDataSolution,outType="phylogeny")
+gauchoReport(gaucho_simple_data,simpleDataSolution,outType="heatmap")
+gauchoReport(gaucho_simple_data,simpleDataSolution,outType="proportion")
+
+## Create output files representing the solution(s) in the current working directory
+gauchoReport(gaucho_simple_data,simpleDataSolution,outType="complete")
+
+## In case you want to know the current working directory, it can be reported using this function:
+getwd()
+@
+
+You should see images like those below.  The colours used for clones are consistent between the phylogeny, the sidebar of the heatmap and the proportion barplot.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{gaucho_simple_data_phylogeny.png}
+    \caption{The phylogeny of the optimum solution to the simple data set.  There is a single root (clone A) which gives rise to clone B which gives rise to clone C.}
+\end{figure}
+
+\begin{figure}[H]
+   \centering
+       \includegraphics[width=\textwidth]{gaucho_simple_data_heatmap}
+   \caption{The input data has been clustered using the heatmap.plus package.  The colour scale goes from blue (low values) through yellow to red (high values).
+   The coloured sidebar shows which clones contain which mutations.  For example, M1 is contained by all clones, whereas M3 is contained only by clone C.}
+\end{figure}
+
+\begin{figure}[H]
+   \centering
+       \includegraphics[width=\textwidth]{gaucho_simple_data_proportions}
+   \caption{The proportions of each clone in each sample of the simple data set.  Sample T0 is composed entirely of clone A, whereas sample T1 is an unequal mixture of 
+   clones A and B, while sample T2 is an unequal mixture of clones B and C.}
+\end{figure}
+
+\subsection{Example 2 - synthetic data containing a hidden clone}
+The second synthetic data set demonstrates the ability of gaucho to infer intermediate clones that are not explicitly detected in the input data and therefore "hidden".
+
+<<gaucho_hidden_data_load, eval=TRUE>>=
+## Load library
+library(gaucho)
+
+## Load hidden data set
+gaucho_hidden_data = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_hidden_data.txt"),header=TRUE,row.names=1)
+
+## There  are three columns (time points T0, T1 and T2)
+## and five rows (mutations M1, M2, M3, M4 and M5)
+gaucho_hidden_data
+@
+
+%<<gaucho_hidden_data_execute, eval=FALSE>>=
+%## Execute gaucho() function on the hidden data set
+%hiddenDataSolution=gaucho(gaucho_hidden_data, number_of_clones=5,
+%                        nroot=1,iterations=3000)
+%
+%## Access solution slot in returned object to show highest scoring solution(s)
+%## This solution's score is -0.02500000
+%hiddenDataSolution@solution
+%
+%     x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21
+%[1,]  0  1  2  2  4 29  0  0  0   0   8   0   3   5   0   0   0   6   2  12   1
+%    x22 x23 x24 x25
+%[1,]  2   4   3   5
+%@
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlcom{## Execute gaucho() function on the hidden data set}
+hiddenDataSolution=\hlkwd{gaucho}(gaucho_hidden_data, number_of_clones=5,
+                        nroot=1,iterations=3000)
+
+\hlcom{## Access solution slot in returned object to show highest scoring solution(s)}
+\hlcom{## This solution's score is -0.02500000}
+hiddenDataSolution@solution
+
+     x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x16 x17 x18 x19 x20 x21
+[1,]  0  1  2  2  4 29  0  0  0   0   8   0   3   5   0   0   0   6   2  12   1
+    x22 x23 x24 x25
+[1,]  2   4   3   5
+\end{alltt}
+\end{kframe}
+\end{knitrout}
+
+<<gaucho_hidden_data_results, eval=FALSE>>=
+## Produce plots for the phylogeny, heatmap and proportions in turn
+gauchoReport(gaucho_hidden_data,hiddenDataSolution,outType="phylogeny")
+gauchoReport(gaucho_hidden_data,hiddenDataSolution,outType="heatmap")
+gauchoReport(gaucho_hidden_data,hiddenDataSolution,outType="proportion")
+
+## Create output files representing the solution(s) in the current working directory
+gauchoReport(gaucho_simple_data,simpleDataSolution,outType="complete")
+@
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{gaucho_hidden_data_phylogeny.png}
+    \caption{The phylogeny of the optimum solution to the hidden data set.  Clone B is both the child of clone A and the parent of all other clones.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{gaucho_hidden_data_heatmap.png}
+    \caption{Heatmap of the hidden data showing the mutation content of the clones.}
+\end{figure}
+
+\begin{figure}[H]
+   \centering
+       \includegraphics[width=\textwidth]{gaucho_hidden_data_proportions}
+   \caption{The proportions of each clone in each sample of the hidden data set.  Although clone B is not present in any of the samples its existance and ancestry have been correctly inferred.}
+\end{figure}
+
+\subsection{Example 3 - complex synthetic data and noisy synthetic data}
+These synthetic data are close to the sort of observations produced by a typical tumour-normal paired exome sequencing experiment.  There are four time points (T0 to T3) and 90 mutations (gene1 to gene90).  Each of the values represents the proportion of cells that contain that mutation at that time point - the cancer cell fraction (CCF).  We also include a synthetic data set with noise added, as real-world data is never perfect.
+
+Note that this example considers a single run of the algorithm, but real use requires multiple runs.  See the Advanced gaucho usage and best practices section for details and sample code.
+
+<<gaucho_synthetic_data, eval=FALSE>>=
+## Load library
+library(gaucho)
+
+## Load synthetic data set and the same data with added jitter
+gaucho_synth_data = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_synth_data.txt"),header=TRUE,row.names=1)
+gaucho_synth_data_jittered = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_synth_data_jittered.txt"),header=TRUE,row.names=1)
+
+## Execute gaucho() function on the synthetic data set - we know that
+## there are 6 clones
+s=gaucho(gaucho_synth_data,number_of_clones=6,iterations=3000)
+
+## Access solution slot in returned object to show highest scoring solution(s)
+## The optimum solution's score is -2.22E-15, which is a rounding error from zero
+s@solution
+
+## Create output files representing the solution(s)
+## in the current working directory
+gauchoReport(gaucho_synth_data,s)
+@
+
+% Leave the original images commented out for now; the images from the paper are much better
+\begin{comment}
+  \begin{figure}[H]
+      \centering
+      \includegraphics[width=\textwidth]{gaucho_synthetic_data_phylogeny.png}
+      \caption{The phylogeny of the optimum solution to the synthetic data set.}
+  \end{figure}
+  
+  \begin{figure}[H]
+      \centering
+      \includegraphics[width=\textwidth]{gaucho_synthetic_data_heatmap.png}
+      \caption{Heatmap of the synthetic data showing the mutation content of the clones.}
+  \end{figure}
+  
+  \begin{figure}[H]
+     \centering
+         \includegraphics[width=\textwidth]{gaucho_synthetic_data_proportions}
+         \caption{The proportions of each clone in each sample of the synthetic data set.}
+  \end{figure}
+\end{comment}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{synthetic_abc.png}
+    \caption{The optimum solution for the synthetic data set.  A shows the relationship between the six clones with the mutations
+    that are gained in each clone labelled.  B shows the proportions of each sample that is composed by each clone.  C shows 
+    hierarchical clustering of the input data, with the corresponding clones for each mutation as a coloured side bar.}
+\end{figure}
+
+
+\subsection{Example 4 - real experimental data with contamination}
+The final included data set and is important for several reasons:
+
+\begin{enumerate}
+   \item It's experimental, biological data from a published source \cite{pmid23873039}
+   \item The publication suggests an optimum ("correct") solution
+   \item The input data is contaminated, so we can test the \texttt{contamination} parameter of \texttt{gaucho()} 
+   \item The data is functionally identical to the sort of mutation data we see in tumour/normal paired sequencing experiments
+\end{enumerate}
+
+<<gaucho_yeast_data, eval=FALSE>>=
+## Load library
+library(gaucho)
+
+## Load yeast data set
+BYB1_G07_pruned = read.table(file.path(system.file("extdata",package="gaucho"),"BYB1_G07_pruned.txt"),header=TRUE,row.names=1)
+
+## Execute gaucho() function on the yeast data set
+## The paper claims that there are 6 clones with multiple roots
+yDataSolution=gaucho(BYB1_G07_pruned, number_of_clones=6, contamination=1, iterations=3000)
+
+## Access solution slot in returned object to show highest scoring solution(s)
+yDataSolution@solution
+
+## Create output files representing the solution(s) in the current working directory
+gauchoReport(BYB1_G07_pruned,yDataSolution)
+@
+
+As expected, solutions with 6 clones (as suggested by the publication) score the highest as a group.  However, we found a subtly
+different solution with 7 clones that scored even higher.  Therefore, the output of that solution is presented below.
+
+% Leave the original images commented out for now; the images from the paper are much better
+\begin{comment}
+  \begin{figure}[H]
+      \centering
+      \includegraphics[width=\textwidth]{BYB1_G07_phylogeny.png}
+      \caption{The phylogeny of the optimum solution to the BYB1_G07 data set containing 7 clones.}
+  \end{figure}
+  
+  \begin{figure}[H]
+      \centering
+      \includegraphics[width=\textwidth]{BYB1_G07_heatmap.png}
+      \caption{Heatmap of the BYB1_G07 data showing the mutation content of the clones.}
+  \end{figure}
+  
+  \begin{figure}[H]
+     \centering
+         \includegraphics[width=\textwidth]{BYB1_G07_proportions}
+         \caption{The proportions of each clone in each sample of the BYB1_G07 data set. Note that clone H, which is not present
+         in either the phylogeny or heatmap, represents "contamination".  In this context, the contamination is yeast cells 
+         that contain none of the mutations that were measured.}
+  \end{figure}
+\end{comment}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{BYB1_G07_abc.png}
+    \caption{A high-scoring solution solution for the yeast data set composed of 7 clones.   A shows the reconstructed phylogeny
+    with each clone labelled with its associated mutations; inset is the 6 clone phylogeny described by Kernighan et al.  B shows
+    the proportions of each sample that is composed by each clone.  Note that clone H, which is not present
+    in either the phylogeny or heatmap, represents "contamination".  In this context, the contamination is yeast cells 
+    that contain none of the mutations that were measured.  C shows hierarchical clustering of the input data, with the
+    corresponding clones for each mutation as a coloured side bar.}
+\end{figure}
+
+
+\subsection{Advanced gaucho usage and best practices}
+We have covered the basic usage of gaucho using small data sets with simple phylogenies, larger data sets with complex phylogenies and finally we recapitulated the results found through other methods in a published data set.  Here we explain more complex use of gaucho and provide sample code for running your own analyses.
+
+
+\subsubsection{Finding an initial estimate of the number of clones}
+All gaucho requires to run is some input and the number of clones.  How can we supply the number of clones to gaucho without knowing it first?
+
+Fortunately, gaucho itself provides a method to estimate the number of clones.  Although there are other methods we plan to implement in gaucho in a later release, the best method currently is run gaucho a number of times with a number of different clone numbers and select the value that gives the lowest scores.
+
+Ideally, you should run gaucho as many times as possible over as large a range of clone numbers as possible, but in practice we have found 10 data points to be more than enough to find a suitable estimate.  Note that each run does not need to be as thorough as when 
+looking for the final solution; a few hundred to a thousand iterations per run should be sufficient to indicate the result.
+
+<<gaucho_find_clones, eval=FALSE>>=
+## Load library
+library(gaucho)
+
+## Load simple data set
+gaucho_synth_data = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_synth_data.txt"),header=TRUE,row.names=1)
+
+## We know that there are 6 clones in this data set.
+## Let's loop from number_of_clones=4 to number_of_clones=8 to illustrate this
+## Also, assume we know nothing about phylogeny, so leave nroot as the default value
+
+## Assign parameters and create an empty data frame to hold the results
+clonerange=4:8
+n=5 
+results=matrix(NA,nrow=iterations,ncol=length(clonerange))
+colnames(results)=paste0(rep("clone",length(clonerange)),clonerange)
+
+## Execute gaucho n times for each number of clones
+for(c in clonerange){
+  for(thisn in 1:n){
+    message(paste("Iteration",thisn,"using",c,"clones"))
+    s=gaucho(gaucho_synth_data, number_of_clones=c,iterations=1000)
+    ## Assign best fitness value to an element in the matrix
+    results[thisn,which(c==clonerange)]=s@fitnessValue
+  }
+}
+
+## Plot the results 
+boxplot(results)
+@
+
+\begin{figure}[H]
+   \centering
+       \includegraphics[width=\textwidth]{synthetic_boxplot}
+       \caption{Lowest fitness scores for different numbers of clones in the synthetic data.  Although 7 clones gives a lower median
+       score across 10 runs, 6 clones acheived the lowest single score.  Therefore, 6 and 7 clones should be explored further.}
+\end{figure}
+
+
+\subsubsection{Executing gaucho multiple times}
+Now that the number of clones has been established to most likely be 6 or 7, a larger number of longer runs should be executed.
+There are a number of ways to address this, but in this example a simple loop executes multiple runs of gaucho for a set number of clones
+and adds the resulting object to a list.  When the run is complete (or is manually ended using ctrl-C), the user may interrogate the
+list to find the best solution.
+
+<<gaucho_multi_runs, eval=FALSE>>=
+## Load library
+library(gaucho)
+
+## Load simple data set
+gaucho_synth_data = read.table(file.path(system.file("extdata",package="gaucho"),"gaucho_synth_data.txt"),header=TRUE,row.names=1)
+
+## Execute 20 runs
+n=20 
+
+## Create an empty list to hold all results
+gauchoResults = list()
+
+## Execute gaucho n times, pushing each resulting object into a list
+for(thisn in 1:n){
+  message(paste("Iteration",thisn))
+  syntheticDataSolution=gaucho(gaucho_synthetic_data, number_of_clones=6, iterations=10000)
+  gauchoResults[thisn]=syntheticDataSolution
+}
+
+## Find lowest fitness values of all runs
+bestScore = max(sapply(gauchoResults, function(x) x@fitnessValue))
+
+## Which run was it?
+which(sapply(gauchoResults, function(x) x@fitnessValue)==bestScore)
+@
+
+Multicore, parallel solutions that run multiple gaucho instances concurrently will be added in a future release of gaucho.
+
+
+\section{Session Info}
+<<sessionInfo, eval=TRUE>>=
+sessionInfo()
+@
+
+
+\printbibliography[heading=bibintoc] 
+
+
+\end{document}
