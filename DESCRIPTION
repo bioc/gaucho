@@ -2,7 +2,7 @@ Package: gaucho
 Type: Package
 Title: Genetic Algorithms for Understanding Clonal Heterogeneity and
         Ordering
-Version: 1.17.0
+Version: 1.17.1
 Date: 2014-04-08
 Authors@R: c(person("Alex", "Murison", role = c("aut",
         "cre"),email="Alexander.Murison@icr.ac.uk"),person("Christopher",
@@ -20,3 +20,4 @@ License: GPL-3
 Author: Alex Murison [aut, cre], Christopher Wardell [aut, cre]
 Maintainer: Alex Murison <Alexander.Murison@icr.ac.uk>, Christopher
         Wardell <Christopher.Wardell@icr.ac.uk>
+PackageStatus: Deprecated
