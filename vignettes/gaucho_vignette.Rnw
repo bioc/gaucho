@@ -61,8 +61,9 @@ This vignette serves as an introduction to the R package gaucho.  It covers the 
  
 <<load_library_fake, eval=FALSE>>=
 ## Install
-source("http://bioconductor.org/biocLite.R")
-biocLite("gaucho")
+if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install("gaucho")
 ## Load
 library(gaucho)
 @
