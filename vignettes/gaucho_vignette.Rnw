@@ -72,7 +72,7 @@ library(gaucho)
 
 \noindent https://github.com/MurisonWardell/gaucho
 
-\paragraph{Dependencies:} Please note that gaucho depends on the following packages which are either available from CRAN or part of base R, but these should be automatically downloaded when Gaucho is installed using biocLite():
+\paragraph{Dependencies:} Please note that gaucho depends on the following packages which are either available from CRAN or part of base R, but these should be automatically downloaded when Gaucho is installed using BiocManager::install():
 GA\cite{scrucca}, compiler\cite{baseR}, heatmap.plus\cite{heatmapplusR}, png\cite{pngR}, as well as graph\cite{graphR}.
 
 
